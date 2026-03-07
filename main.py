@@ -1,22 +1,34 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-# ... keep your existing imports
+from dotenv import load_dotenv
+import os
+import logging
+import uuid
 
-from services.s3_service import upload_bytes_to_s3
-from services.transcribe_service import start_transcription_job, wait_for_transcription, fetch_transcript_text
-from fastapi import FastAPI
+from typing import List, Dict, Optional
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import logging
 
+load_dotenv()
+
+# Services
 from services.profile_service import extract_profile
 from services.eligibility_service import check_eligibility
 from services.career_service import get_career_recommendations, generate_summary
+from services.ai_advisor_service import generate_ai_advice
+
+from services.translation_service import translate_to_english
+from services.s3_service import upload_audio
+from services.transcribe_service import start_transcription, get_transcription
+from services.dynamodb_service import save_result
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PathWise AI Backend")
 
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,96 +37,178 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# -------------------------
+# Models
+# -------------------------
+
 class AnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=5)
+
+
+class SaveRequest(BaseModel):
+    user_id: str
+    summary: str
+    profile: Dict
+    eligibility: List[str]
+    careers: List[Dict]
+
+
+# -------------------------
+# Basic Endpoints
+# -------------------------
 
 @app.get("/")
 def home():
     return {"message": "PathWise backend running on AWS 🚀"}
 
+
 @app.get("/health")
 def health():
     return {"status": "API healthy"}
 
+
+# -------------------------
+# TEXT ANALYSIS
+# -------------------------
+
 @app.post("/analyze")
 def analyze(request: AnalyzeRequest):
+
     text = request.text
 
-    profile_result = extract_profile(text)         # <-- now returns {"profile":..., "warnings":[...]}
+    # translate to english
+    translated_text = translate_to_english(text)
+
+    profile_result = extract_profile(translated_text)
     profile = profile_result["profile"]
     warnings = profile_result.get("warnings", [])
 
     eligibility = check_eligibility(profile)
-    career_matches = get_career_recommendations(profile, text)
+
+    career_matches = get_career_recommendations(profile, translated_text)
+
     summary = generate_summary(profile, career_matches)
 
-    logger.info(f"Received text: {text}")
-    logger.info(f"Extracted profile: {profile}")
-    logger.info(f"Warnings: {warnings}")
-    logger.info(f"Eligibility result: {eligibility}")
-    logger.info(f"Career top match: {career_matches[0] if career_matches else None}")
-    logger.info(f"Summary: {summary}")
-
+    try:
+        ai_advice = generate_ai_advice(profile, career_matches)
+    except Exception as e:
+        logger.warning(f"AI advisor unavailable: {e}")
+        ai_advice = "AI advisor currently unavailable."
     return {
+        "input_text": text,
+        "translated_text": translated_text,
         "profile": profile,
         "warnings": warnings,
-        "eligibility": eligibility if eligibility is not None else [],
+        "eligibility": eligibility,
         "career_matches": career_matches,
         "ai_summary": summary,
-        "skill_detection_note": "Skills are inferred from degree baseline + keyword detection from user text (MVP heuristic)."
+        "ai_advice": ai_advice
     }
-@app.post("/transcribe-analyze")
-async def transcribe_analyze(file: UploadFile = File(...)):
-    """
-    Upload audio -> Transcribe -> run analyze pipeline on transcript.
-    """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Missing filename")
 
-    # allow only common formats
-    allowed = {"mp3", "mp4", "wav", "m4a"}
-    ext = (file.filename.split(".")[-1] or "").lower()
-    if ext not in allowed:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
 
-    audio_bytes = await file.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Empty file")
+# -------------------------
+# VOICE ANALYSIS
+# -------------------------
 
-    # 1) upload to S3
-    s3_uri = upload_bytes_to_s3(audio_bytes, file.filename, file.content_type or "application/octet-stream")
+@app.post("/voice-analyze")
+async def voice_analyze(audio: UploadFile = File(...)):
 
-    # 2) start transcribe
-    job_name = start_transcription_job(s3_uri=s3_uri, media_format=ext, language_code="en-IN")
+    # upload to S3
+    s3_uri = upload_audio(audio)
 
-    # 3) wait + fetch transcript
-    job_resp = wait_for_transcription(job_name, timeout_seconds=180)
-    status = job_resp["TranscriptionJob"]["TranscriptionJobStatus"]
+    # start transcription
+    job_name = start_transcription(s3_uri)
 
-    if status == "FAILED":
-        reason = job_resp["TranscriptionJob"].get("FailureReason", "unknown")
-        raise HTTPException(status_code=500, detail=f"Transcribe failed: {reason}")
+    transcript = get_transcription(job_name)
 
-    transcript_uri = job_resp["TranscriptionJob"]["Transcript"]["TranscriptFileUri"]
-    text = fetch_transcript_text(transcript_uri)
+    translated_text = translate_to_english(transcript)
 
-    # 4) reuse your existing analyze pipeline
-    profile = extract_profile(text)
+    profile_result = extract_profile(translated_text)
+    profile = profile_result["profile"]
+
     eligibility = check_eligibility(profile)
-    career_matches = get_career_recommendations(profile, text)
+
+    career_matches = get_career_recommendations(profile, translated_text)
+
     summary = generate_summary(profile, career_matches)
 
+    try:
+        ai_advice = generate_ai_advice(profile, career_matches)
+    except Exception as e:
+        logger.warning(f"AI advisor unavailable: {e}")
+        ai_advice = "AI advisor currently unavailable."
     return {
-        "transcribe": {
-            "job_name": job_name,
-            "s3_uri": s3_uri,
-            "transcript_uri": transcript_uri
-        },
-        "text": text,
+        "transcript": transcript,
+        "translated_text": translated_text,
         "profile": profile,
-        "warnings": [],
-        "eligibility": eligibility if eligibility is not None else [],
+        "eligibility": eligibility,
         "career_matches": career_matches,
         "ai_summary": summary,
-        "skill_detection_note": "Skills are inferred from degree baseline + keyword detection from user text (MVP heuristic)."
+        "ai_advice": ai_advice
+    }
+
+
+# -------------------------
+# SMART ENDPOINT
+# -------------------------
+
+@app.post("/advisor")
+async def advisor(
+    text: Optional[str] = None,
+    audio: Optional[UploadFile] = File(None)
+):
+
+    if not text and not audio:
+        return {"error": "Provide either text or audio"}
+
+    if audio:
+        s3_uri = upload_audio(audio)
+        job_name = start_transcription(s3_uri)
+        text = get_transcription(job_name)
+
+    translated_text = translate_to_english(text)
+
+    profile_result = extract_profile(translated_text)
+    profile = profile_result["profile"]
+
+    eligibility = check_eligibility(profile)
+
+    career_matches = get_career_recommendations(profile, translated_text)
+
+    summary = generate_summary(profile, career_matches)
+
+    try:
+        ai_advice = generate_ai_advice(profile, career_matches)
+    except Exception as e:
+        logger.warning(f"AI advisor unavailable: {e}")
+        ai_advice = "AI advisor currently unavailable."
+    return {
+        "input": text,
+        "translated_text": translated_text,
+        "profile": profile,
+        "eligibility": eligibility,
+        "career_matches": career_matches,
+        "ai_summary": summary,
+        "ai_advice": ai_advice
+    }
+
+
+# -------------------------
+# SAVE RESULTS
+# -------------------------
+
+@app.post("/save")
+def save_data(data: SaveRequest):
+
+    result = save_result(
+        profile=data.profile,
+        eligibility=data.eligibility,
+        careers=data.careers,
+        summary=data.summary
+    )
+
+    return {
+        "message": "Saved successfully",
+        "data": result
     }
