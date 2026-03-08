@@ -18,7 +18,7 @@ const analyzeCareer = async () => {
 
 try{
 
-const response = await fetch("http://65.0.72.65:8000/analyze",{
+const response = await fetch("http://35.154.116.53:8000/analyze",{
 method:"POST",
 headers:{
 "Content-Type":"application/json"
@@ -59,13 +59,7 @@ recorder.onstop = ()=>{
 
 const blob = new Blob(chunksRef.current,{type:"audio/webm"})
 
-console.log("Recorded audio size:",blob.size)
-
 setAudioBlob(blob)
-
-if(blob.size < 5000){
-alert("Audio too short. Please speak longer.")
-}
 
 setRecordingStatus("Recording stopped")
 
@@ -113,14 +107,12 @@ alert("Please record audio first")
 return
 }
 
-console.log("Sending audio size:",audioBlob.size)
-
 const formData = new FormData()
 formData.append("audio",audioBlob,"recording.webm")
 
 try{
 
-const response = await fetch("http://65.0.72.65:8000/voice-analyze",{
+const response = await fetch("http://35.154.116.53:8000/voice-analyze",{
 method:"POST",
 body:formData
 })
@@ -133,6 +125,47 @@ setResult(data)
 
 console.error(error)
 alert("Voice analysis failed")
+
+}
+
+}
+
+
+// ---------------- SAVE RESULT ----------------
+const saveResult = async ()=>{
+
+if(!result){
+alert("No result to save")
+return
+}
+
+try{
+
+await fetch("http://35.154.116.53:8000/save",{
+method:"POST",
+headers:{
+"Content-Type":"application/json"
+},
+body:JSON.stringify({
+
+summary: result.ai_summary,
+
+degree: result.profile?.degree,
+state: result.profile?.state,
+marks: result.profile?.marks,
+
+career: result.career_matches?.[0]?.career,
+feasibility_score: result.career_matches?.[0]?.feasibility_score
+
+})
+})
+
+alert("Result saved successfully")
+
+}catch(error){
+
+console.error(error)
+alert("Failed to save")
 
 }
 
@@ -283,14 +316,14 @@ marginBottom:"20px"
 <p>{result.ai_advice}</p>
 
 
-{/* SCHOLARSHIPS */}
-{result?.eligibility?.length > 0 && (
+{/* ELIGIBLE SCHOLARSHIPS */}
+{result?.eligibility?.eligible_schemes?.length > 0 && (
 
 <div>
 
-<h3>Scholarship Eligibility</h3>
+<h3>Eligible Scholarships</h3>
 
-{result.eligibility.map((item,index)=>(
+{result.eligibility.eligible_schemes.map((item,index)=>(
 
 <div key={index} style={{
 border:"1px solid #ddd",
@@ -301,15 +334,37 @@ borderRadius:"8px"
 
 <p><b>Scheme:</b> {item.scheme}</p>
 
-<p><b>Eligible:</b> {item.eligible ? "Yes" : "No"}</p>
+<p><b>Status:</b> Eligible</p>
 
-<p><b>Reasons:</b></p>
+</div>
 
-<ul>
-{item.reasons.map((r,i)=>(
-<li key={i}>{r}</li>
 ))}
-</ul>
+
+</div>
+
+)}
+
+
+{/* NEAR ELIGIBLE */}
+{result?.eligibility?.near_eligible_schemes?.length > 0 && (
+
+<div>
+
+<h3>Almost Eligible Scholarships</h3>
+
+{result.eligibility.near_eligible_schemes.map((item,index)=>(
+
+<div key={index} style={{
+border:"1px solid #ddd",
+padding:"15px",
+marginBottom:"10px",
+borderRadius:"8px",
+background:"#fff8e1"
+}}>
+
+<p><b>Scheme:</b> {item.scheme}</p>
+
+<p><b>Reason:</b> {item.reasons?.join(", ")}</p>
 
 </div>
 
@@ -352,6 +407,23 @@ background:"#f9f9f9"
 </div>
 
 ))}
+
+{/* SAVE BUTTON */}
+
+<button
+onClick={saveResult}
+style={{
+padding:"12px 25px",
+background:"#28a745",
+color:"white",
+border:"none",
+borderRadius:"8px",
+fontSize:"16px",
+cursor:"pointer"
+}}
+>
+Save Result
+</button>
 
 </div>
 
