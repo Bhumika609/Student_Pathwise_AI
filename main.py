@@ -51,7 +51,7 @@ class SaveRequest(BaseModel):
     summary: str
     profile: Dict
     eligibility: List[str]
-    careers: List[Dict]
+    career_matches: List[Dict]
 
 
 # -------------------------
@@ -100,7 +100,7 @@ def analyze(request: AnalyzeRequest):
         "translated_text": translated_text,
         "profile": profile,
         "warnings": warnings,
-        "eligibility": eligibility,
+        "eligibility":eligibility,
         "career_matches": career_matches,
         "ai_summary": summary,
         "ai_advice": ai_advice
@@ -142,7 +142,7 @@ async def voice_analyze(audio: UploadFile = File(...)):
         "transcript": transcript,
         "translated_text": translated_text,
         "profile": profile,
-        "eligibility": eligibility,
+        "eligibility":eligibility,
         "career_matches": career_matches,
         "ai_summary": summary,
         "ai_advice": ai_advice
@@ -187,7 +187,7 @@ async def advisor(
         "input": text,
         "translated_text": translated_text,
         "profile": profile,
-        "eligibility": eligibility,
+        "eligibility":eligibility,
         "career_matches": career_matches,
         "ai_summary": summary,
         "ai_advice": ai_advice
@@ -204,7 +204,7 @@ def save_data(data: SaveRequest):
     result = save_result(
         profile=data.profile,
         eligibility=data.eligibility,
-        careers=data.careers,
+        careers=data.career_matches,
         summary=data.summary
     )
 

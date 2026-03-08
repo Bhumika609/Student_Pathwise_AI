@@ -1,32 +1,36 @@
+import boto3
+import json
+REGION = "ap-south-1"
+
+dynamodb = boto3.resource("dynamodb", region_name=REGION)
+scheme_table = dynamodb.Table("schemes")
+
+
+def fetch_schemes():
+    response = scheme_table.scan()
+    return response.get("Items", [])
+
+
 def check_eligibility(profile: dict):
 
-    schemes = [
-        {
-            "name": "Karnataka Merit Scholarship",
-            "min_marks": 75,
-            "state": "Karnataka"
-        },
-        {
-            "name": "National Skill Grant",
-            "min_marks": 60,
-            "state": None
-        }
-    ]
+    schemes = fetch_schemes()
 
-    results = []
+    eligible_schemes = []
+    near_eligible_schemes = []
+    all_results = []
 
     for scheme in schemes:
 
         eligible = True
         reasons = []
 
-        state_required = scheme["state"]
+        state_required = scheme.get("state")
         user_state = profile.get("state")
 
-        marks_required = scheme["min_marks"]
+        marks_required = int(scheme.get("min_marks", 0))
         user_marks = profile.get("marks")
 
-        # ---- STATE CHECK ----
+        # STATE CHECK
         if state_required:
 
             if user_state is None:
@@ -37,7 +41,7 @@ def check_eligibility(profile: dict):
                 eligible = False
                 reasons.append("State mismatch")
 
-        # ---- MARKS CHECK ----
+        # MARKS CHECK
         if user_marks is None:
             eligible = False
             reasons.append("Marks not provided")
@@ -49,7 +53,7 @@ def check_eligibility(profile: dict):
         if eligible:
             reasons = ["All criteria satisfied"]
 
-        results.append({
+        result = {
             "scheme": scheme["name"],
             "eligible": eligible,
             "reasons": reasons,
@@ -67,6 +71,22 @@ def check_eligibility(profile: dict):
                     "passed": None if user_marks is None else user_marks >= marks_required
                 }
             }
-        })
+        }
 
-    return results
+        all_results.append(result)
+
+        # ---- ELIGIBLE LIST ----
+        if eligible:
+            eligible_schemes.append(result)
+
+        # ---- NEAR ELIGIBLE ----
+        else:
+            if user_marks and marks_required and abs(user_marks - marks_required) <= 5:
+                near_eligible_schemes.append(result)
+
+    return {
+        "eligible_schemes": eligible_schemes[:5],
+        "near_eligible_schemes": near_eligible_schemes[:3],
+        "total_schemes_checked": len(all_results),
+        "all_results": all_results
+    }

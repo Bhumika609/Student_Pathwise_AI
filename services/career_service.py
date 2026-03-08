@@ -1,5 +1,8 @@
 # services/career_service.py
-
+from google import genai
+import os
+import json
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 KNOWN_SKILLS = {
     "python", "sql", "excel", "statistics",
     "java", "data structures", "algorithms",
@@ -118,7 +121,48 @@ def _generate_roadmap(career_name: str, missing_skills: list):
     })
 
     return {"target_career": career_name, "steps": steps}
+def _generate_ai_roadmap(career_name: str, missing_skills: list):
 
+    prompt = f"""
+Create a beginner roadmap to become a {career_name}.
+
+Missing skills:
+{", ".join(missing_skills)}
+
+Return ONLY JSON in this format:
+
+{{
+  "target_career": "{career_name}",
+  "steps": [
+    {{"step": 1, "action": "example"}}
+  ]
+}}
+"""
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+
+        text = response.text.strip()
+
+        # remove markdown if model adds it
+        text = text.replace("json", "").replace("", "").strip()
+
+        roadmap = json.loads(text)
+
+        # safety validation
+        if "steps" not in roadmap:
+            raise ValueError("Invalid roadmap format")
+
+        return roadmap
+
+    except Exception as e:
+        print("Gemini roadmap error:", e)
+
+        # fallback to rule-based roadmap
+        return _generate_roadmap(career_name, missing_skills)
 def _build_feasibility_explanation(demand, skill_score, edu_score, constraint_score, missing):
     bits = [
         f"Market demand: {demand} (bonus {DEMAND_BONUS.get(demand, 0)}).",
@@ -158,7 +202,7 @@ def get_career_recommendations(profile: dict, text: str):
         )
         feasibility = min(100.0, round(feasibility + DEMAND_BONUS.get(demand, 0), 2))
 
-        roadmap = _generate_roadmap(career_name, missing)
+        roadmap = _generate_ai_roadmap(career_name, missing)
         feasibility_explanation = _build_feasibility_explanation(
             demand, skill_score, edu_score, constraint_score, missing
         )
@@ -196,29 +240,32 @@ def get_career_recommendations(profile: dict, text: str):
     return results
 
 def generate_summary(profile: dict, career_matches: list):
+
     if not career_matches:
-        return "No career matches found based on your profile."
+        return "No career matches found."
 
-    top = career_matches[0]
-    career = top["career"]
-    feasibility = top["feasibility_score"]
-    match = top["match_percentage"]
-    missing = top["missing_skills"]
+    prompt = f"""
+User profile:
+{profile}
 
-    # IMPORTANT: stop overclaiming
-    if feasibility >= 80:
-        return (
-            f"Best among evaluated options: {career}. High feasibility ({feasibility}%). "
-            f"Skill match {match}%. Next: build projects + apply."
+Career matches:
+{career_matches[:2]}
+
+Write a short 2 sentence career guidance summary.
+"""
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
         )
 
-    if feasibility >= 50:
-        return (
-            f"Best among evaluated options: {career}. Moderate feasibility ({feasibility}%). "
-            f"Skill match {match}%. Improve by learning: {', '.join(missing)}."
-        )
+        text = response.text.strip()
 
-    return (
-        f"Best among evaluated options: {career}, but feasibility is low ({feasibility}%). "
-        f"Skill match {match}%. Start with: {', '.join(missing)}."
-    )
+        return text
+
+    except Exception as e:
+        print("Gemini summary error:", e)
+
+        top = career_matches[0]
+        return f"Best career option is {top['career']} with feasibility {top['feasibility_score']}%."

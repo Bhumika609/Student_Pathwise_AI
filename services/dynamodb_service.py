@@ -8,7 +8,9 @@ table = dynamodb.Table("career_advisory")
 
 
 def save_result(profile, eligibility, careers, summary):
-
+    for career in careers:
+        if "feasibility_score" in career:
+            career["feasibility_score"] = Decimal(str(career["feasibility_score"]))
     item = {
         "user_id": str(uuid.uuid4()),
         "timestamp": datetime.utcnow().isoformat(),
