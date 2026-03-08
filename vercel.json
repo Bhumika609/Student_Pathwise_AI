@@ -1,9 +1,8 @@
 {
-  "builds": [
+  "routes": [
     {
-      "src": "pathwise-frontend/package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+      "src": "/api/(.*)",
+      "dest": "http://35.154.116.53:8000/$1"
     }
   ]
 }

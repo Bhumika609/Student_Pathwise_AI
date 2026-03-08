@@ -18,7 +18,7 @@ const analyzeCareer = async () => {
 
 try{
 
-const response = await fetch("http://35.154.116.53:8000/analyze",{
+const response = await fetch("/api/analyze",{
 method:"POST",
 headers:{
 "Content-Type":"application/json"
@@ -112,7 +112,7 @@ formData.append("audio",audioBlob,"recording.webm")
 
 try{
 
-const response = await fetch("http://35.154.116.53:8000/voice-analyze",{
+const response = await fetch("/api/voice-analyze",{
 method:"POST",
 body:formData
 })
@@ -141,7 +141,7 @@ return
 
 try{
 
-await fetch("http://35.154.116.53:8000/save",{
+await fetch("/api/save",{
 method:"POST",
 headers:{
 "Content-Type":"application/json"
